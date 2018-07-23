@@ -443,6 +443,38 @@ paths:
           description: Group not found
           schema:
             $ref: '#/definitions/Error'
+    post:
+      tags:
+        - groups
+      summary: Add a member to a group
+      operationId: addGroupMember
+      parameters:
+        - name: id
+          in: path
+          description: Public ID of the group
+          required: true
+          type: string
+        - name: user
+          in: path
+          description: |
+            User ID of the user to add to the group.
+          required: true
+          type: string
+      responses:
+        '204':
+          description: Success
+        '404':
+          description: Group not found
+          schema:
+            $ref: '#/definitions/Error'
+        '404':
+          description: User not found
+          schema:
+            $ref: '#/definitions/Error'
+        '404':
+          description: Mismatched Group and User authority
+          schema:
+            $ref: '#/definitions/Error'
 definitions:
   NewAnnotation:
     $ref: './schemas/annotation-schema.json'

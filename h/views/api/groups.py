@@ -3,9 +3,11 @@
 from __future__ import unicode_literals
 
 from pyramid import security
-from pyramid.httpexceptions import HTTPNoContent, HTTPBadRequest
+from pyramid.httpexceptions import HTTPNoContent, HTTPBadRequest, HTTPNotFound
 
+from h.auth.util import request_auth_client
 from h.exceptions import PayloadError
+from h.interfaces import IGroupService
 from h.presenters import GroupJSONPresenter, GroupsJSONPresenter
 from h.schemas.api.group import CreateGroupAPISchema
 from h.traversal import GroupContext
@@ -77,6 +79,34 @@ def remove_member(group, request):
 
     group_service = request.find_service(name='group')
     group_service.member_leave(group, userid)
+
+    return HTTPNoContent()
+
+
+@api_config(route_name='api.group_member',
+            request_method='POST',
+            link_name='group.member.add',
+            description='Add the current user to a group.',
+            effective_principals=security.Authenticated)
+def add_member(request):
+    """Add a member to a given group."""
+    client = request_auth_client(request)
+
+    user_svc = request.find_service(name='user')
+    group_svc = request.find_service(name='group')
+    groupfinder_svc = request.find_service(IGroupService)
+
+    group = groupfinder_svc.find(request.matchdict['pubid'])
+    user = user_svc.fetch(request.matchdict['user'],
+                          client.authority)
+    if user is None:
+        raise HTTPNotFound()
+    if group is None:
+        raise HTTPNotFound()
+    if user.authority != group.authority:
+        raise HTTPNotFound()
+
+    group_svc.member_join(group, user.userid)
 
     return HTTPNoContent()
 

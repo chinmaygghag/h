@@ -5,11 +5,14 @@ from __future__ import unicode_literals
 import mock
 import pytest
 
-from pyramid.httpexceptions import HTTPNoContent, HTTPBadRequest
+from pyramid.httpexceptions import HTTPNoContent, HTTPBadRequest, HTTPNotFound
 
 from h.views.api import groups as views
+from h.models.auth_client import GrantType
 from h.services.list_groups import ListGroupsService
 from h.services.group import GroupService
+from h.services.groupfinder import GroupfinderService
+from h.services.user import UserService
 from h.services.group_links import GroupLinksService
 
 pytestmark = pytest.mark.usefixtures('GroupsJSONPresenter')
@@ -184,6 +187,85 @@ class TestCreateGroup(object):
         return pyramid_request
 
 
+@pytest.mark.usefixtures('group_service',
+                         'groupfinder_service',
+                         'user_service',
+                         'request_auth_client')
+class TestAddMember(object):
+
+    def test_it_adds_current_user_to_group(self,
+                                           factories,
+                                           pyramid_request,
+                                           groupfinder_service,
+                                           group_service,
+                                           user_service):
+        group = factories.Group()
+        user = factories.User()
+
+        groupfinder_service.find.return_value = group
+        user_service.fetch.return_value = user
+
+        pyramid_request.matchdict['user'] = user.userid
+        pyramid_request.matchdict['pubid'] = group.pubid
+
+        resp = views.add_member(pyramid_request)
+
+        group_service.member_join.assert_called_once_with(group, user.userid)
+        assert isinstance(resp, HTTPNoContent)
+
+    def test_it_fails_with_mismatched_user_and_group_authorities(self,
+                                                                 factories,
+                                                                 pyramid_request,
+                                                                 groupfinder_service,
+                                                                 group_service,
+                                                                 user_service):
+        group = factories.Group()
+        user = factories.User(authority="different_authority.com")
+
+        groupfinder_service.find.return_value = group
+        user_service.fetch.return_value = user
+
+        pyramid_request.matchdict['user'] = user.userid
+        pyramid_request.matchdict['pubid'] = group.pubid
+
+        with pytest.raises(HTTPNotFound):
+            views.add_member(pyramid_request)
+
+    def test_it_fails_with_non_existent_user(self,
+                                             factories,
+                                             pyramid_request,
+                                             groupfinder_service,
+                                             group_service,
+                                             user_service):
+        group = factories.Group()
+
+        groupfinder_service.find.return_value = group
+        user_service.fetch.return_value = None
+
+        pyramid_request.matchdict['user'] = "some_user"
+        pyramid_request.matchdict['pubid'] = group.pubid
+
+        with pytest.raises(HTTPNotFound):
+            views.add_member(pyramid_request)
+
+    def test_it_fails_with_non_existent_group(self,
+                                              factories,
+                                              pyramid_request,
+                                              groupfinder_service,
+                                              group_service,
+                                              user_service):
+        user = factories.User()
+
+        groupfinder_service.find.return_value = None
+        user_service.fetch.return_value = user
+
+        pyramid_request.matchdict['user'] = user.userid
+        pyramid_request.matchdict['pubid'] = "some_group"
+
+        with pytest.raises(HTTPNotFound):
+            views.add_member(pyramid_request)
+
+
 @pytest.mark.usefixtures('authenticated_userid', 'group_service')
 class TestRemoveMember(object):
 
@@ -258,6 +340,20 @@ def group_service(pyramid_config):
 
 
 @pytest.fixture
+def user_service(pyramid_config):
+    service = mock.create_autospec(UserService, spec_set=True, instance=True)
+    pyramid_config.register_service(service, name='user')
+    return service
+
+
+@pytest.fixture
+def groupfinder_service(pyramid_config):
+    groupfinder_service = mock.create_autospec(GroupfinderService, instance=True, spec_set=True)
+    pyramid_config.register_service(groupfinder_service, iface='h.interfaces.IGroupService')
+    return groupfinder_service
+
+
+@pytest.fixture
 def group_links_service(pyramid_config):
     svc = mock.create_autospec(GroupLinksService, spec_set=True, instance=True)
     pyramid_config.register_service(svc, name='group_links')
@@ -269,3 +365,15 @@ def list_groups_service(pyramid_config):
     svc = mock.create_autospec(ListGroupsService, spec_set=True, instance=True)
     pyramid_config.register_service(svc, name='list_groups')
     return svc
+
+
+@pytest.fixture
+def auth_client(factories):
+    return factories.ConfidentialAuthClient(authority='example.com',
+                                            grant_type=GrantType.client_credentials)
+
+
+@pytest.fixture
+def request_auth_client(patch, auth_client):
+    request_auth_client = patch('h.views.api.groups.request_auth_client')
+    request_auth_client.return_value = auth_client
